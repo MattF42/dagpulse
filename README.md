@@ -36,12 +36,12 @@ DAGPulse connects to the HTND gRPC endpoint and uses a long-lived **server-strea
                    │ gRPC-web (streaming)
                    ▼
         ┌──────────────────────┐
-        │ grpcwebproxy :8080   │  gRPC-web ↔ gRPC bridge
+        │ grpcwebproxy :4242   │  gRPC-web ↔ gRPC bridge
         └──────────┬───────────┘
                    │ gRPC / HTTP2
                    ▼
         ┌──────────────────────┐
-        │ HTND node :16110     │  local node
+        │ HTND node :42420     │  local node
         └──────────────────────┘
 ```
 
@@ -57,7 +57,7 @@ DAGPulse connects to the HTND gRPC endpoint and uses a long-lived **server-strea
 
 ### Prerequisites
 
-1. A running **HTND node** with gRPC enabled (default port `16110`).
+1. A running **HTND node** with gRPC enabled (default port `42420`).
 2. **grpcwebproxy** — translates browser gRPC-web requests into the gRPC/HTTP2 protocol HTND speaks:
 
 ```bash
@@ -66,10 +66,10 @@ go install github.com/improbable-eng/grpc-web/go/grpcwebproxy@latest
 
 # Run alongside HTND
 grpcwebproxy \
-  --backend_addr=localhost:16110 \
+  --backend_addr=localhost:42420 \
   --allow_all_origins \
   --run_tls_server=false \
-  --server_http_debug_port=8080
+  --server_http_debug_port=4242
 ```
 
 ### Development
@@ -90,11 +90,11 @@ npm run dev
 
 The app will be available at `http://localhost:5173/dagpulse/`.
 
-By default the Vite dev-server proxies gRPC-web requests to `http://localhost:16110`.
+By default the Vite dev-server proxies gRPC-web requests to `http://localhost:42420`.
 If you are running grpcwebproxy on a different port, set `VITE_RPC_HOST` in `.env`:
 
 ```
-VITE_RPC_HOST=http://localhost:8080
+VITE_RPC_HOST=http://localhost:4242
 ```
 
 ### Build for production
@@ -115,7 +115,7 @@ Internet (HTTPS)
     ▼
 nginx :443
   ├── /dagpulse/         → dist/ (static SPA)
-  └── /protowire.RPC/    → grpcwebproxy :8080 → HTND :16110
+  └── /protowire.RPC/    → grpcwebproxy :4242 → HTND :42420
 ```
 
 ### Option A — docker compose (recommended)
@@ -146,10 +146,10 @@ sudo nginx -t && sudo systemctl reload nginx
 
 # 3. Run grpcwebproxy (keep running as a service)
 grpcwebproxy \
-  --backend_addr=localhost:16110 \
+  --backend_addr=localhost:42420 \
   --allow_all_origins \
   --run_tls_server=false \
-  --server_http_debug_port=8080
+  --server_http_debug_port=4242
 ```
 
 See [`nginx/nginx.conf`](./nginx/nginx.conf) for the full annotated configuration.
