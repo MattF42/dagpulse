@@ -35,7 +35,6 @@ export type ErrorMessage = {
   message: string
 }
 
-// ← ADD THIS
 export type StatsMessage = {
   type: 'stats'
   blueScore?: number
@@ -52,7 +51,7 @@ type SnapshotCallback = (msg: SnapshotMessage) => void
 type BlockCallback = (msg: BlockMessage) => void
 type StatusCallback = (msg: StatusMessage) => void
 type ErrorCallback = (msg: ErrorMessage) => void
-type StatsCallback = (msg: StatsMessage) => void   // ← ADD
+type StatsCallback = (msg: StatsMessage) => void
 type ConnectFailCallback = () => void
 
 export class WSTransport {
@@ -64,14 +63,14 @@ export class WSTransport {
   private blockCallbacks: BlockCallback[] = []
   private statusCallbacks: StatusCallback[] = []
   private errorCallbacks: ErrorCallback[] = []
-  private statsCallbacks: StatsCallback[] = []         // ← ADD
+  private statsCallbacks: StatsCallback[] = []
   private connectFailCallbacks: ConnectFailCallback[] = []
 
   onSnapshot(cb: SnapshotCallback) { this.snapshotCallbacks.push(cb) }
   onBlock(cb: BlockCallback)       { this.blockCallbacks.push(cb) }
   onStatus(cb: StatusCallback)     { this.statusCallbacks.push(cb) }
   onError(cb: ErrorCallback)       { this.errorCallbacks.push(cb) }
-  onStats(cb: StatsCallback)       { this.statsCallbacks.push(cb) }  // ← ADD
+  onStats(cb: StatsCallback)       { this.statsCallbacks.push(cb) }
   onConnectFail(cb: ConnectFailCallback) { this.connectFailCallbacks.push(cb) }
 
   connect(): void {
@@ -112,7 +111,7 @@ export class WSTransport {
         case 'block':    this.blockCallbacks.forEach(cb => cb(msg as BlockMessage));       break
         case 'status':   this.statusCallbacks.forEach(cb => cb(msg as StatusMessage));     break
         case 'error':    this.errorCallbacks.forEach(cb => cb(msg as ErrorMessage));       break
-        case 'stats':    this.statsCallbacks.forEach(cb => cb(msg as StatsMessage));       break  // ← ADD
+        case 'stats':    this.statsCallbacks.forEach(cb => cb(msg as StatsMessage));       break
         case 'ping':     this.ws?.send(JSON.stringify({ type: 'pong' }));                  break
         case 'pong':                                                                        break
         default:

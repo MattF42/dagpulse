@@ -33,11 +33,12 @@ python main.py
 
 ## Configuration
 
-| Variable      | Default     | Description                        |
-|---------------|-------------|------------------------------------|
-| `HTND_HOST`   | `localhost` | gRPC host of the HTND node         |
-| `HTND_PORT`   | `42420`     | gRPC port of the HTND node         |
-| `BRIDGE_PORT` | `8765`      | Port this bridge server listens on |
+| Variable         | Default     | Description                                          |
+|------------------|-------------|------------------------------------------------------|
+| `HTND_HOST`      | `localhost` | gRPC host of the HTND node                           |
+| `HTND_PORT`      | `42420`     | gRPC port of the HTND node                           |
+| `BRIDGE_PORT`    | `8765`      | Port this bridge server listens on                   |
+| `STATS_INTERVAL` | `10`        | Seconds between periodic stats broadcasts            |
 
 ## WebSocket message format
 
@@ -52,6 +53,9 @@ All messages are JSON.
 
 // Sent on connect and on gRPC reconnect
 {"type": "status", "connected": true, "serverVersion": "1.6.10", "isSynced": true}
+
+// Sent periodically (every STATS_INTERVAL seconds)
+{"type": "stats", "blueScore": 91200000, "daaScore": 148784020, "hashrate": 12500000}
 
 // Sent on gRPC error
 {"type": "error", "message": "..."}
