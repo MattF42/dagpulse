@@ -30,6 +30,7 @@ from htnd_client import HtndClient, HtndCommunicationError
 HTND_HOST = os.environ.get("HTND_HOST", "localhost")
 HTND_PORT = int(os.environ.get("HTND_PORT", "42420"))
 BRIDGE_PORT = int(os.environ.get("BRIDGE_PORT", "8765"))
+STATS_INTERVAL = float(os.environ.get("STATS_INTERVAL", "10"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,8 +54,9 @@ _clients: set[WebSocket] = set()
 # Shared gRPC client (one channel, reused across all WS connections)
 _htnd: HtndClient = HtndClient(HTND_HOST, HTND_PORT)
 
-# Background task handle
+# Background task handles
 _subscription_task: asyncio.Task | None = None
+_stats_task: asyncio.Task | None = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -106,12 +108,53 @@ async def _fetch_snapshot() -> dict:
 
 # ── Block subscription loop ────────────────────────────────────────────────────
 
+async def _run_stats_loop():
+    """
+    Periodic coroutine: every STATS_INTERVAL seconds fetches blueScore + hashrate
+    from HTND and broadcasts a stats message to all WebSocket clients.
+    """
+    while True:
+        try:
+            dag_resp = await _htnd.request("getBlockDagInfoRequest")
+            dag_info = dag_resp.get("getBlockDagInfoResponse", {})
+
+            hash_resp = await _htnd.request(
+                "estimateNetworkHashesPerSecondRequest",
+                {"windowSize": 1000, "startHash": None},
+            )
+            nhps = hash_resp.get("estimateNetworkHashesPerSecondResponse", {}).get(
+                "networkHashesPerSecond", 0
+            )
+
+            await _broadcast(
+                {
+                    "type": "stats",
+                    "blueScore": dag_info.get("virtualBlueScore"),
+                    "daaScore": dag_info.get("virtualDaaScore"),
+                    "hashrate": nhps,
+                }
+            )
+        except asyncio.CancelledError:
+            logger.info("Stats loop cancelled, shutting down")
+            return
+        except Exception as exc:
+            logger.debug("Stats loop error (non-fatal): %s", exc)
+
+        try:
+            await asyncio.sleep(STATS_INTERVAL)
+        except asyncio.CancelledError:
+            logger.info("Stats loop cancelled during sleep, shutting down")
+            return
+
+
 async def _run_subscription():
     """
     Long-running coroutine: subscribes to notifyBlockAddedRequest and fans out
     every blockAddedNotification to all WebSocket clients.  Reconnects with
     exponential backoff if the stream drops.
     """
+    global _stats_task
+
     backoff = 2.0
     while True:
         logger.info("Connecting to HTND at %s:%d …", HTND_HOST, HTND_PORT)
@@ -139,6 +182,15 @@ async def _run_subscription():
             )
             backoff = 2.0  # reset on successful connect
 
+            # Start / restart the stats loop now that the connection is live
+            if _stats_task is not None and not _stats_task.done():
+                _stats_task.cancel()
+                try:
+                    await _stats_task
+                except asyncio.CancelledError:
+                    pass
+            _stats_task = asyncio.create_task(_run_stats_loop())
+
             async def _on_block(msg: dict):
                 notif = msg.get("blockAddedNotification")
                 if notif:
@@ -151,6 +203,8 @@ async def _run_subscription():
 
         except asyncio.CancelledError:
             logger.info("Subscription task cancelled, shutting down")
+            if _stats_task is not None and not _stats_task.done():
+                _stats_task.cancel()
             return
         except Exception as exc:
             logger.warning("HTND stream error: %s — reconnecting in %.0fs", exc, backoff)
@@ -175,6 +229,13 @@ async def _startup():
 
 @app.on_event("shutdown")
 async def _shutdown():
+    global _stats_task
+    if _stats_task:
+        _stats_task.cancel()
+        try:
+            await _stats_task
+        except asyncio.CancelledError:
+            pass
     if _subscription_task:
         _subscription_task.cancel()
         try:
