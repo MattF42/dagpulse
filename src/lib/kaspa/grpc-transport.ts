@@ -169,7 +169,11 @@ export async function grpcWebUnary(
         return false // cancel after first frame
       },
       signal,
-    ).catch((err) => {
+    ).then(() => {
+      if (!resolved) {
+        reject(new Error('gRPC-web: stream ended with no data frames (server returned trailers only - check gRPC status)'))
+      }
+    }).catch((err) => {
       if (!resolved) reject(err)
     })
   })

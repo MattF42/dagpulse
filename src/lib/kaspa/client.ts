@@ -18,6 +18,17 @@ import { grpcWebUnary, grpcWebStream } from './grpc-transport'
  */
 const RPC_HOST: string = import.meta.env.VITE_RPC_HOST ?? ''
 
+/** Race a promise against a timeout; rejects with a clear message if deadline is exceeded. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`[HTNDClient] ${label} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v) },
+      (e) => { clearTimeout(timer); reject(e) },
+    )
+  })
+}
+
 /** Target BPS that HTND is configured to run at; used only by the mock fallback. */
 const HTND_TARGET_BPS = 5
 
@@ -58,7 +69,7 @@ export class KaspaClient {
     this.setState('connecting')
     try {
       // Probe the node with a lightweight GetInfo call
-      const info = await this.rpcGetInfo()
+      const info = await withTimeout(this.rpcGetInfo(), 10_000, 'rpcGetInfo')
       this.setState('connected')
       console.log(
         '[HTNDClient] Connected via gRPC-web to local HTND node.',
