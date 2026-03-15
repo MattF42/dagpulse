@@ -9,16 +9,7 @@
 
   <div class="flex items-center gap-1.5">
     <div class="w-2 h-2 rounded-full bg-accent"></div>
-    <span class="text-xs font-bold text-accent tabular-nums">Kaspa: {kaspaTime}s</span>
+    <span class="text-xs font-bold text-accent tabular-nums">Hoosat: 0.2s</span>
   </div>
 
-  <div class="flex items-center gap-1.5">
-    <div class="w-2 h-2 rounded-full bg-purple-500/60"></div>
-    <span class="text-xs text-text-dim tabular-nums">Ethereum: ~12s</span>
-  </div>
-
-  <div class="flex items-center gap-1.5">
-    <div class="w-2 h-2 rounded-full bg-orange-500/60"></div>
-    <span class="text-xs text-text-dim tabular-nums">Bitcoin: ~600s</span>
-  </div>
 </div>

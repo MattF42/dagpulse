@@ -23,7 +23,7 @@
     }
     const facts = [
       "GHOSTDAG selects a 'blue' set of well-connected blocks, ordering them by DAA score.",
-      "Unlike Bitcoin's longest chain, Kaspa keeps ALL blocks -- even 'red' ones contribute.",
+      "Unlike Bitcoin's longest chain, Hoosat keeps ALL blocks -- even 'red' ones contribute.",
       "The virtual chain (highlighted path) is the selected parent chain through the DAG.",
       "Blocks with the same DAA score were mined in parallel by different miners.",
     ]

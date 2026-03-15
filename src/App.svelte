@@ -74,7 +74,7 @@
       <div class="absolute inset-0 flex items-center justify-center bg-bg/80 backdrop-blur-sm z-10" role="status" aria-live="polite">
         <div class="text-center animate-fade-in">
           <div class="w-12 h-12 rounded-full border-2 border-accent border-t-transparent animate-spin mx-auto mb-4" aria-hidden="true"></div>
-          <div class="text-text text-lg font-semibold">Connecting to Kaspa Network</div>
+          <div class="text-text text-lg font-semibold">Connecting to Hoosat Network</div>
           <div class="text-text-dim text-sm mt-1">Fetching live BlockDAG data...</div>
         </div>
       </div>
