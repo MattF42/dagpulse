@@ -14,8 +14,8 @@ import grpc
 from google.protobuf import json_format
 from grpc._channel import _MultiThreadedRendezvous
 
-from .htnd import messages_pb2_grpc
-from .htnd.messages_pb2 import KaspadMessage
+from htnd import messages_pb2_grpc
+from htnd.messages_pb2 import KaspadMessage
 
 logger = logging.getLogger(__name__)
 
