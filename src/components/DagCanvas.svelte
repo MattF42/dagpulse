@@ -268,7 +268,7 @@
     bind:this={canvasEl}
     class="block w-full h-full touch-none"
     style="cursor: grab;"
-    aria-label="Kaspa BlockDAG visualization. Pan to scroll, scroll to zoom, click blocks to inspect."
+    aria-label="Hoosat BlockDAG visualization. Pan to scroll, scroll to zoom, click blocks to inspect."
     onwheel={onWheel}
     onmousedown={onMouseDown}
     onmousemove={onMouseMoveHandler}
