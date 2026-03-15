@@ -1,6 +1,6 @@
 # DAGPulse
 
-**See the fastest BlockDAG. Live.**
+**See the Hoosat BlockDAG. Live.**
 
 DAGPulse is a real-time BlockDAG visualization dashboard for [HTND](https://github.com/HoosatNetwork/HTND) — the Hoosat Network's GhostDAG node. It connects to your local HTND node via a **WebSocket bridge** and visualises the directed acyclic graph as blocks arrive at ~5 per second.
 
