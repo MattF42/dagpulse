@@ -118,6 +118,27 @@ async def _run_stats_loop():
             dag_resp = await _htnd.request("getBlockDagInfoRequest")
             dag_info = dag_resp.get("getBlockDagInfoResponse", {})
 
+            # Derive blue score from the tip block's verboseData
+            # (virtualBlueScore is not available on the DAG info endpoint)
+            blue_score = None
+            tip_hashes = dag_info.get("tipHashes")
+            if tip_hashes is None:
+                # Some versions may use virtualParentHashes instead
+                tip_hashes = dag_info.get("virtualParentHashes", [])
+            elif not tip_hashes:
+                logger.debug("tipHashes is empty in DAG info response")
+            if tip_hashes:
+                try:
+                    block_resp = await _htnd.request(
+                        "getBlockRequest",
+                        {"hash": tip_hashes[0], "includeTransactions": False},
+                    )
+                    block = block_resp.get("getBlockResponse", {}).get("block", {})
+                    verbose = block.get("verboseData", {})
+                    blue_score = verbose.get("blueScore")
+                except Exception as exc:
+                    logger.debug("Could not fetch tip block for blueScore: %s", exc)
+
             hash_resp = await _htnd.request(
                 "estimateNetworkHashesPerSecondRequest",
                 {"windowSize": 1000, "startHash": None},
@@ -129,7 +150,7 @@ async def _run_stats_loop():
             await _broadcast(
                 {
                     "type": "stats",
-                    "blueScore": dag_info.get("virtualBlueScore"),
+                    "blueScore": blue_score,
                     "daaScore": dag_info.get("virtualDaaScore"),
                     "hashrate": nhps,
                 }

@@ -82,12 +82,7 @@ export class KaspaClient {
       }
 
       if (dagInfo.virtualDaaScore) {
-        this.statsCallbacks.forEach(cb => cb({ daaScore: dagInfo.virtualDaaScore as number }))
-      }
-
-      // ← ADD: also extract blueScore from the snapshot
-      if (dagInfo.virtualBlueScore) {
-        this.statsCallbacks.forEach(cb => cb({ blueScore: dagInfo.virtualBlueScore as number }))
+        this.statsCallbacks.forEach(cb => cb({ daaScore: Number(dagInfo.virtualDaaScore) }))
       }
 
       const parsed: DagBlock[] = []
@@ -103,6 +98,11 @@ export class KaspaClient {
         this.classifyBlueRed(parsed)
         this.batchCallbacks.forEach(cb => cb(parsed))
         for (const block of parsed) this.blockCallbacks.forEach(cb => cb(block))
+        // Extract blueScore from the tip block (virtualBlueScore not available in dagInfo)
+        const tipBlockVerbose = (blocks[0]?.verboseData ?? {}) as Record<string, unknown>
+        if (tipBlockVerbose.blueScore) {
+          this.statsCallbacks.forEach(cb => cb({ blueScore: Number(tipBlockVerbose.blueScore) }))
+        }
         this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
       }
     })
@@ -128,7 +128,7 @@ export class KaspaClient {
       this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
     })
 
-    // ← ADD: route stats messages from the bridge into statsCallbacks
+    // Route stats messages from the bridge into statsCallbacks
     transport.onStats((msg) => {
       const partial: Partial<NetworkStats> = {}
       if (msg.blueScore != null) partial.blueScore = Number(msg.blueScore)
