@@ -7,6 +7,7 @@ export default defineConfig({
   base: '/dagpulse/',
   server: {
     host: '0.0.0.0',
+    allowedHosts: ['pulse.htn.foztor.net'],
     proxy: {
       // Forward WebSocket connections to the local DAGPulse bridge
       '/dagpulse/ws': {
