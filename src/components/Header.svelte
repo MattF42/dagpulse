@@ -36,7 +36,7 @@
   <div class="flex items-center gap-4">
     <ConnectionStatus />
     <a
-      href="https://github.com/Yonkoo11/dagpulse"
+      href="https://github.com/MattF42/dagpulse"
       target="_blank"
       rel="noopener noreferrer"
       class="text-text-dim hover:text-text transition-colors text-xs flex items-center gap-1 p-1"

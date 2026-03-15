@@ -64,7 +64,7 @@
         <div class="w-full bg-bg rounded-full h-2 overflow-hidden">
           <div class="h-full bg-accent rounded-full" style="width: 2%"></div>
         </div>
-        <span class="text-[10px] text-accent font-mono whitespace-nowrap">KAS 1s</span>
+        <span class="text-[10px] text-accent font-mono whitespace-nowrap">HTN 0.2s</span>
       </div>
       <div class="flex items-center gap-2">
         <div class="w-full bg-bg rounded-full h-2 overflow-hidden">

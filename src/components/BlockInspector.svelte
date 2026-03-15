@@ -42,7 +42,7 @@
 
   function openExplorer() {
     if ($selectedBlock) {
-      window.open(`https://explorer.kaspa.org/blocks/${$selectedBlock.hash}`, '_blank')
+      window.open(`https://explorer.hoosat.fi/blocks/${$selectedBlock.hash}`, '_blank')
     }
   }
 </script>
@@ -139,7 +139,7 @@
           <div class="flex flex-wrap gap-1 max-h-16 overflow-y-auto">
             {#each detail.transactions as tx}
               <a
-                href="https://explorer.kaspa.org/txs/{tx.id}"
+                href="https://explorer.hoosat.fi/txs/{tx.id}"
                 target="_blank"
                 rel="noopener"
                 class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-tx/10 text-tx hover:bg-tx/25 transition-colors no-underline"
