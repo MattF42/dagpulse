@@ -30,7 +30,7 @@
         <span class="text-accent">DAG</span><span class="text-text">Pulse</span>
       </h1>
     </div>
-    <span class="text-xs text-text-dim hidden sm:inline">GHOSTDAG Consensus Visualizer</span>
+    <span class="text-xs text-text-dim hidden sm:inline">GHOSTDAG Consensus Visualizer for Hoosat (HTN)</span>
   </nav>
 
   <div class="flex items-center gap-4">
