@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DAGPulse – Docker Compose for production deployment
+#
+# Services
+# ────────
+#   dagpulse    – nginx: serves the built SPA + proxies gRPC-web
+#   grpcwebproxy – translates browser gRPC-web (HTTP/1.1) to HTND gRPC (HTTP/2)
+#
+# Prerequisites
+# ─────────────
+#   1. Build the SPA:  npm run build
+#   2. The HTND node must be running on the HOST at port 16110
+#      (the grpcwebproxy connects to host.docker.internal:16110).
+#   3. Put your TLS certificates in ./nginx/certs/ (fullchain.pem, privkey.pem)
+#      or use the provided HTTP-only profile for testing behind a load-balancer.
+#
+# Usage
+# ─────
+#   # Production (with TLS)
+#   docker compose up -d
+#
+#   # Development / testing (HTTP only, no TLS)
+#   docker compose --profile http up -d
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── gRPC-web ↔ gRPC bridge ────────────────────────────────────────────────
+  grpcwebproxy:
+    image: ghcr.io/improbable-eng/grpc-web:latest
+    # Build from source if the image is unavailable:
+    # build:
+    #   context: https://github.com/improbable-eng/grpc-web.git#master:go/grpcwebproxy
+    restart: unless-stopped
+    command:
+      - "--backend_addr=host.docker.internal:16110"
+      - "--allow_all_origins"
+      - "--run_tls_server=false"
+      - "--server_http_debug_port=8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets container reach the host HTND node
+    expose:
+      - "8080"
+
+  # ── nginx: static SPA + gRPC-web proxy ───────────────────────────────────
+  dagpulse:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - grpcwebproxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Built Svelte app
+      - ./dist:/var/www/dagpulse:ro
+      # nginx config (update server_name and cert paths inside before deploying)
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/dagpulse.conf:ro
+      # TLS certificates (e.g. from Let's Encrypt / certbot)
+      - ./nginx/certs:/etc/letsencrypt:ro
+
+  # ── Optional HTTP-only profile for testing ───────────────────────────────
+  dagpulse-http:
+    profiles: ["http"]
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - grpcwebproxy
+    ports:
+      - "8090:80"
+    volumes:
+      - ./dist:/var/www/dagpulse:ro
+      - ./nginx/nginx-http.conf:/etc/nginx/conf.d/dagpulse.conf:ro

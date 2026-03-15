@@ -1,7 +1,22 @@
 import type { DagBlock, NetworkStats, ConnectionState, BlockDetail } from './types'
 import { MockBlockStream } from './mock'
+import { encodeMessage, decodeMessage } from './kaspa-proto'
+import { grpcWebUnary, grpcWebStream } from './grpc-transport'
 
-const API_BASE = 'https://api.kaspa.org'
+/**
+ * gRPC-web endpoint for the local HTND node.
+ *
+ * In development the Vite dev-server proxies /protowire.RPC/* to this address
+ * so the browser connects to the Vite origin (no CORS).
+ *
+ * For production behind nginx set VITE_RPC_HOST to the public origin
+ * (e.g. https://your-server.com) — nginx proxies /protowire.RPC/* to
+ * the grpcwebproxy sidecar which talks to the HTND node.
+ *
+ * An empty string means same-origin, which is correct for both the
+ * Vite proxy and the nginx deployment.
+ */
+const RPC_HOST: string = import.meta.env.VITE_RPC_HOST ?? ''
 
 type BlockCallback = (block: DagBlock) => void
 type StatsCallback = (stats: Partial<NetworkStats>) => void
@@ -15,11 +30,9 @@ export class KaspaClient {
   private statsCallbacks: StatsCallback[] = []
   private stateCallbacks: StateCallback[] = []
   private _state: ConnectionState = 'disconnected'
-  private pollInterval: ReturnType<typeof setInterval> | null = null
   private statsInterval: ReturnType<typeof setInterval> | null = null
-  private useMock = false
+  private subscriptionAbort: AbortController | null = null
   private seenHashes = new Set<string>()
-  private lastBlueScore = 0
   private initialFetchDone = false
 
   get state(): ConnectionState {
@@ -36,109 +49,125 @@ export class KaspaClient {
     this.stateCallbacks.forEach(cb => cb(s))
   }
 
+  // ─── Public API ────────────────────────────────────────────────────────────
+
   async connect(): Promise<void> {
     this.setState('connecting')
-
     try {
-      // Test API connectivity
-      const res = await fetch(`${API_BASE}/info/virtual-chain-blue-score`)
-      if (!res.ok) throw new Error(`API returned ${res.status}`)
-      const data = await res.json()
-      this.lastBlueScore = Number(data.blueScore)
-
+      // Probe the node with a lightweight GetInfo call
+      const info = await this.rpcGetInfo()
       this.setState('connected')
-      console.log('[KaspaClient] Connected to REST API, blueScore:', this.lastBlueScore)
+      console.log(
+        '[HTNDClient] Connected via gRPC-web to local HTND node.',
+        'version:', info.serverVersion,
+        'synced:', info.isSynced,
+      )
 
-      // Start polling for new blocks
-      this.startBlockPolling()
+      // Load an initial snapshot of the DAG, then subscribe for live updates
+      await this.loadInitialBlocks()
+      this.startBlockSubscription()
       this.startStatsPolling()
     } catch (e) {
-      console.warn('[KaspaClient] REST API failed, falling back to mock:', e)
+      console.warn('[HTNDClient] gRPC connection failed, falling back to mock:', e)
       this.startMock()
     }
   }
 
-  private async startBlockPolling() {
-    // Fetch initial subgraph from current tip
-    await this.fetchRecentBlocks()
-    this.initialFetchDone = true
-
-    // Poll every 1 second for new blocks
-    this.pollInterval = setInterval(() => this.fetchRecentBlocks(), 1000)
+  async getBlockDetail(hash: string): Promise<BlockDetail | null> {
+    try {
+      const resp = await this.rpcGetBlock(hash, true)
+      if (!resp) return null
+      return this.grpcBlockToDetail(resp, hash)
+    } catch (e) {
+      console.warn('[HTNDClient] getBlockDetail failed:', e)
+      return null
+    }
   }
 
-  private async fetchRecentBlocks() {
-    try {
-      const dagRes = await fetch(`${API_BASE}/info/blockdag`)
-      if (!dagRes.ok) return
-      const dagInfo = await dagRes.json()
+  disconnect() {
+    this.subscriptionAbort?.abort()
+    this.subscriptionAbort = null
 
-      const tipHashes: string[] = dagInfo.tipHashes || []
-      const currentDaaScore = Number(dagInfo.virtualDaaScore || 0)
+    if (this.mockStream) {
+      this.mockStream.stop()
+      this.mockStream = null
+    }
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval)
+      this.statsInterval = null
+    }
+    this.setState('disconnected')
+  }
 
-      if (!this.initialFetchDone) {
-        // Initial fetch: pick first tip and walk parents to depth 3 (capped at 80 blocks)
-        const startHash = tipHashes[0]
-        if (startHash) {
-          const subgraph = await this.fetchSubgraph(startHash, 3, 80)
-          this.classifyBlueRed(subgraph)
-          // Emit all blocks as a batch
-          for (const block of subgraph) {
-            this.seenHashes.add(block.hash)
-          }
-          this.batchCallbacks.forEach(cb => cb(subgraph))
-          for (const block of subgraph) {
-            this.blockCallbacks.forEach(cb => cb(block))
-          }
-          this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
-        }
-      } else {
-        // Subsequent polls: fetch new tips and their parents (depth 1-2)
-        const newHashes = tipHashes.filter(h => !this.seenHashes.has(h))
-        const hashesToFetch = newHashes.slice(0, 10)
+  // ─── gRPC helpers ──────────────────────────────────────────────────────────
 
-        if (hashesToFetch.length > 0) {
-          const allNewBlocks: DagBlock[] = []
-          for (const hash of hashesToFetch) {
-            const subgraph = await this.fetchSubgraph(hash, 1, 15)
-            // Filter to only truly new blocks
-            const newBlocks = subgraph.filter(b => !this.seenHashes.has(b.hash))
-            allNewBlocks.push(...newBlocks)
-            for (const block of newBlocks) {
-              this.seenHashes.add(block.hash)
-            }
-          }
+  /** Send a KaspadMessage and return the decoded response object. */
+  private async call(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const reqBytes = encodeMessage(payload)
+    const respBytes = await grpcWebUnary(RPC_HOST, reqBytes)
+    return decodeMessage(respBytes)
+  }
 
-          if (allNewBlocks.length > 0) {
-            this.classifyBlueRed(allNewBlocks)
-            this.batchCallbacks.forEach(cb => cb(allNewBlocks))
-            for (const block of allNewBlocks) {
-              this.blockCallbacks.forEach(cb => cb(block))
-            }
-            this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
-          }
-        }
-      }
+  private async rpcGetInfo() {
+    const resp = await this.call({ getInfoRequest: {} })
+    return (resp.getInfoResponse ?? {}) as {
+      serverVersion: string
+      isSynced: boolean
+      mempoolSize: number
+    }
+  }
 
-      // Trim seen hashes to prevent unbounded growth
-      if (this.seenHashes.size > 500) {
-        const iter = this.seenHashes.values()
-        for (let i = 0; i < 200; i++) {
-          this.seenHashes.delete(iter.next().value!)
-        }
-      }
+  private async rpcGetBlockDagInfo() {
+    const resp = await this.call({ getBlockDagInfoRequest: {} })
+    return (resp.getBlockDagInfoResponse ?? {}) as {
+      tipHashes: string[]
+      virtualDaaScore: number
+      networkName: string
+    }
+  }
 
-      if (currentDaaScore > 0) {
-        this.statsCallbacks.forEach(cb => cb({ daaScore: currentDaaScore }))
-      }
-    } catch (e) {
-      console.warn('[KaspaClient] Block poll failed:', e)
+  private async rpcGetBlock(hash: string, includeTransactions = false) {
+    const resp = await this.call({
+      getBlockRequest: { hash, includeTransactions },
+    })
+    const r = resp.getBlockResponse as Record<string, unknown> | undefined
+    if (!r || (r.error as any)?.message) return null
+    return r.block as Record<string, unknown> | undefined
+  }
+
+  private async rpcEstimateHashrate(): Promise<number> {
+    const resp = await this.call({
+      estimateNetworkHashesPerSecondRequest: { windowSize: 1000, startHash: '' },
+    })
+    const r = resp.estimateNetworkHashesPerSecondResponse as Record<string, unknown> | undefined
+    return Number(r?.networkHashesPerSecond ?? 0)
+  }
+
+  // ─── Initial block load ────────────────────────────────────────────────────
+
+  private async loadInitialBlocks() {
+    const dagInfo = await this.rpcGetBlockDagInfo()
+    const tipHashes: string[] = dagInfo.tipHashes ?? []
+    if (tipHashes.length === 0) return
+
+    const subgraph = await this.fetchSubgraph(tipHashes[0], 3, 80)
+    this.classifyBlueRed(subgraph)
+
+    for (const block of subgraph) this.seenHashes.add(block.hash)
+    this.batchCallbacks.forEach(cb => cb(subgraph))
+    for (const block of subgraph) this.blockCallbacks.forEach(cb => cb(block))
+    this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
+
+    this.initialFetchDone = true
+
+    if (dagInfo.virtualDaaScore) {
+      this.statsCallbacks.forEach(cb => cb({ daaScore: dagInfo.virtualDaaScore }))
     }
   }
 
   /**
-   * Recursively fetch a block and its parents up to maxDepth.
-   * Caps total blocks to maxBlocks to avoid exploding with K=10 parents.
+   * Walk a block's parent graph breadth-first up to maxDepth levels.
+   * Caps total blocks at maxBlocks to keep the canvas manageable.
    */
   private async fetchSubgraph(startHash: string, maxDepth: number, maxBlocks = 80): Promise<DagBlock[]> {
     const result: DagBlock[] = []
@@ -147,33 +176,29 @@ export class KaspaClient {
 
     for (let depth = 0; depth <= maxDepth && currentLevel.length > 0 && result.length < maxBlocks; depth++) {
       const nextLevel: string[] = []
-      // Cap blocks per level to prevent exponential blowup (K=10 parents per block)
       const levelHashes = currentLevel.slice(0, Math.max(5, maxBlocks - result.length))
 
-      // Fetch blocks in parallel (batches of 5)
+      // Fetch in parallel batches of 5
       for (let i = 0; i < levelHashes.length && result.length < maxBlocks; i += 5) {
         const batch = levelHashes.slice(i, i + 5)
-        const promises = batch.map(async (hash) => {
-          if (visited.has(hash) || this.seenHashes.has(hash)) return null
-          visited.add(hash)
-          try {
-            const res = await fetch(`${API_BASE}/blocks/${hash}`)
-            if (!res.ok) return null
-            const data = await res.json()
-            return { data, hash }
-          } catch {
-            return null
-          }
-        })
+        const fetched = await Promise.all(
+          batch.map(async (hash) => {
+            if (visited.has(hash) || this.seenHashes.has(hash)) return null
+            visited.add(hash)
+            try {
+              return await this.rpcGetBlock(hash, false)
+            } catch {
+              return null
+            }
+          }),
+        )
 
-        const results = await Promise.all(promises)
-        for (const item of results) {
-          if (!item || result.length >= maxBlocks) continue
-          const block = this.parseRestBlock(item.data)
+        for (const raw of fetched) {
+          if (!raw || result.length >= maxBlocks) continue
+          const block = this.parseGrpcBlock(raw)
           if (!block) continue
           result.push(block)
 
-          // Queue parents for next depth level (limit to first 3 parents to keep graph manageable)
           if (depth < maxDepth) {
             for (const parentHash of block.parentHashes.slice(0, 3)) {
               if (!visited.has(parentHash) && !this.seenHashes.has(parentHash)) {
@@ -190,51 +215,162 @@ export class KaspaClient {
     return result
   }
 
+  // ─── Real-time block subscription ──────────────────────────────────────────
+
   /**
-   * Second pass: classify blocks as blue or red based on merge set data.
-   * A block appearing in any other block's mergeSetReds is red.
-   * Otherwise it's blue.
+   * Subscribe to BlockAdded notifications from the HTND node via a
+   * long-lived gRPC-web server-streaming call.  Restarts automatically
+   * on disconnect unless `disconnect()` was called.
    */
-  private classifyBlueRed(blocks: DagBlock[]) {
-    const redSet = new Set<string>()
+  private startBlockSubscription() {
+    const ac = new AbortController()
+    this.subscriptionAbort = ac
 
-    // Collect all hashes that appear in red merge sets
-    for (const block of blocks) {
-      for (const redHash of block.mergeSetReds) {
-        redSet.add(redHash)
+    const reqBytes = encodeMessage({ notifyBlockAddedRequest: {} })
+
+    const run = async () => {
+      try {
+        await grpcWebStream(
+          RPC_HOST,
+          reqBytes,
+          (frameBytes) => {
+            const msg = decodeMessage(frameBytes)
+
+            if (msg.notifyBlockAddedResponse) {
+              console.log('[HTNDClient] Block-added subscription confirmed')
+            }
+
+            if (msg.blockAddedNotification) {
+              const notif = msg.blockAddedNotification as Record<string, unknown>
+              const raw = notif.block as Record<string, unknown> | undefined
+              if (!raw) return
+
+              const block = this.parseGrpcBlock(raw)
+              if (!block || this.seenHashes.has(block.hash)) return
+
+              this.seenHashes.add(block.hash)
+              this.classifyBlueRed([block])
+
+              // Trim seen-hash set to prevent unbounded memory growth
+              if (this.seenHashes.size > 1000) {
+                const iter = this.seenHashes.values()
+                for (let i = 0; i < 400; i++) this.seenHashes.delete(iter.next().value!)
+              }
+
+              this.blockCallbacks.forEach(cb => cb(block))
+              this.batchCallbacks.forEach(cb => cb([block]))
+              this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
+            }
+          },
+          ac.signal,
+        )
+      } catch (e) {
+        if (ac.signal.aborted) return
+        console.warn('[HTNDClient] Block subscription dropped, reconnecting in 2 s:', e)
+        setTimeout(run, 2000)
       }
     }
 
-    // Apply classification
-    for (const block of blocks) {
-      if (redSet.has(block.hash)) {
-        block.isBlue = false
-      }
-      // blocks default to isBlue=true from parseRestBlock
-    }
+    run()
   }
 
-  private parseRestBlock(data: any): DagBlock | null {
+  // ─── Stats polling ─────────────────────────────────────────────────────────
+
+  private startStatsPolling() {
+    const poll = async () => {
+      try {
+        const [dagInfo, nodeInfo, hashrate] = await Promise.allSettled([
+          this.rpcGetBlockDagInfo(),
+          this.rpcGetInfo(),
+          this.rpcEstimateHashrate(),
+        ])
+
+        const stats: Partial<NetworkStats> = { isConnected: true }
+
+        if (dagInfo.status === 'fulfilled') {
+          const d = dagInfo.value
+          if (d.virtualDaaScore) stats.daaScore = d.virtualDaaScore
+        }
+
+        if (nodeInfo.status === 'fulfilled') {
+          const d = nodeInfo.value
+          stats.isSynced      = d.isSynced
+          stats.serverVersion = d.serverVersion
+          stats.mempoolSize   = d.mempoolSize
+        }
+
+        if (hashrate.status === 'fulfilled') {
+          const hr = hashrate.value
+          if (hr > 0) {
+            if (hr >= 1e12)      stats.hashrate = (hr / 1e12).toFixed(1) + ' TH/s'
+            else if (hr >= 1e9)  stats.hashrate = (hr / 1e9).toFixed(1)  + ' GH/s'
+            else if (hr >= 1e6)  stats.hashrate = (hr / 1e6).toFixed(1)  + ' MH/s'
+            else                 stats.hashrate = hr.toFixed(0)           + ' H/s'
+          }
+        }
+
+        this.statsCallbacks.forEach(cb => cb(stats))
+      } catch (e) {
+        console.warn('[HTNDClient] Stats poll failed:', e)
+      }
+    }
+
+    poll()
+    this.statsInterval = setInterval(poll, 5000)
+  }
+
+  // ─── Mock fallback ─────────────────────────────────────────────────────────
+
+  private startMock() {
+    this.mockStream = new MockBlockStream()
+    this.mockStream.start((block) => {
+      this.blockCallbacks.forEach(cb => cb(block))
+    })
+    this.setState('connected')
+
+    this.statsInterval = setInterval(() => {
+      const bps = 4.5 + Math.random() * 1.5 // ~5 BPS like a local HTND node
+      this.statsCallbacks.forEach(cb => cb({
+        blocksPerSecond: bps,
+        txPerSecond: bps * 0.4,
+        hashrate: (10 + Math.random() * 5).toFixed(1) + ' GH/s',
+        peerCount: 8 + Math.floor(Math.random() * 4),
+        isConnected: true,
+        isSynced: true,
+        serverVersion: 'mock',
+      }))
+    }, 1000)
+  }
+
+  // ─── Parsers ───────────────────────────────────────────────────────────────
+
+  /**
+   * Convert a gRPC RpcBlock object (plain JS from protobufjs) to a DagBlock.
+   * Field names and numbers are from the canonical Kaspa/HTND proto definitions.
+   */
+  private parseGrpcBlock(raw: Record<string, unknown>): DagBlock | null {
     try {
-      const hash = data.verboseData?.hash || ''
+      const header  = (raw.header  ?? {}) as Record<string, unknown>
+      const verbose = (raw.verboseData ?? {}) as Record<string, unknown>
+
+      const hash = String(verbose.hash ?? '')
       if (!hash) return null
 
+      // Collect parent hashes from all DAG levels
       const parents: string[] = []
-      const parentLevels = data.header?.parents || data.parents || []
+      const parentLevels = (header.parents ?? []) as Array<{ parentHashes?: string[] }>
       for (const level of parentLevels) {
-        if (Array.isArray(level.parentHashes)) {
-          parents.push(...level.parentHashes)
-        }
+        if (Array.isArray(level.parentHashes)) parents.push(...level.parentHashes)
       }
 
-      const blueScore = Number(data.verboseData?.blueScore || 0)
-      const daaScore = Number(data.header?.daaScore || 0)
-      const timestamp = Number(data.header?.timestamp || Date.now())
-      const txCount = data.transactions?.length || 0
+      const blueScore = Number(verbose.blueScore ?? header.blueScore ?? 0)
+      const daaScore  = Number(header.daaScore ?? 0)
+      const timestamp = Number(header.timestamp ?? Date.now())
+      const txCount   = Array.isArray(raw.transactions) ? raw.transactions.length : 0
 
-      const mergeSetBlues: string[] = data.verboseData?.mergeSetBluesHashes || []
-      const mergeSetReds: string[] = data.verboseData?.mergeSetRedsHashes || []
-      const selectedParentHash: string | null = (parentLevels[0]?.parentHashes?.[0]) || null
+      const mergeSetBlues: string[] = (verbose.mergeSetBluesHashes as string[] | undefined) ?? []
+      const mergeSetReds:  string[] = (verbose.mergeSetRedsHashes  as string[] | undefined) ?? []
+      const selectedParentHash: string | null = (verbose.selectedParentHash as string | undefined) ?? null
 
       return {
         hash,
@@ -243,135 +379,68 @@ export class KaspaClient {
         daaScore,
         timestamp,
         txCount,
-        isBlue: true, // default to blue, classifyBlueRed will fix
+        isBlue: true, // classifyBlueRed will correct this
         mergeSetBlues,
         mergeSetReds,
-        isVirtualChain: false, // set later by markVirtualChain
+        isVirtualChain: Boolean(verbose.isChainBlock),
         selectedParentHash,
         x: 0, y: 0,
         targetX: 0, targetY: 0,
         opacity: 0, scale: 0.5,
         glowIntensity: 1,
-        addedAt: performance.now()
+        addedAt: performance.now(),
       }
     } catch {
       return null
     }
   }
 
-  private async startStatsPolling() {
-    const poll = async () => {
-      try {
-        const [blueScoreRes, hashrateRes, dagInfoRes] = await Promise.allSettled([
-          fetch(`${API_BASE}/info/virtual-chain-blue-score`),
-          fetch(`${API_BASE}/info/hashrate?stringOnly=false`),
-          fetch(`${API_BASE}/info/blockdag`),
-        ])
-
-        const stats: Partial<NetworkStats> = { isConnected: true, isSynced: true }
-
-        if (blueScoreRes.status === 'fulfilled' && blueScoreRes.value.ok) {
-          const d = await blueScoreRes.value.json()
-          stats.blueScore = Number(d.blueScore || 0)
-        }
-
-        if (hashrateRes.status === 'fulfilled' && hashrateRes.value.ok) {
-          const d = await hashrateRes.value.json()
-          const hr = Number(d.hashrate || 0)
-          if (hr >= 1e6) stats.hashrate = (hr / 1e6).toFixed(1) + ' TH/s'
-          else if (hr >= 1e3) stats.hashrate = (hr / 1e3).toFixed(1) + ' GH/s'
-          else stats.hashrate = hr.toFixed(0) + ' MH/s'
-        }
-
-        if (dagInfoRes.status === 'fulfilled' && dagInfoRes.value.ok) {
-          const d = await dagInfoRes.value.json()
-          const daaScore = Number(d.virtualDaaScore || 0)
-          if (daaScore > 0) stats.daaScore = daaScore
-        }
-
-        this.statsCallbacks.forEach(cb => cb(stats))
-      } catch (e) {
-        console.warn('[KaspaClient] Stats poll failed:', e)
-      }
-    }
-
-    await poll()
-    this.statsInterval = setInterval(poll, 5000)
-  }
-
-  private startMock() {
-    this.useMock = true
-    this.mockStream = new MockBlockStream()
-    this.mockStream.start((block) => {
-      this.blockCallbacks.forEach(cb => cb(block))
-    })
-    this.setState('connected')
-
-    this.statsInterval = setInterval(() => {
-      const bps = 9 + Math.random() * 2
-      this.statsCallbacks.forEach(cb => cb({
-        blocksPerSecond: bps,
-        txPerSecond: bps * 0.4,
-        hashrate: (450 + Math.random() * 50).toFixed(1) + ' TH/s',
-        peerCount: 180 + Math.floor(Math.random() * 40),
-        isConnected: true,
-        isSynced: true,
-        serverVersion: 'mock',
-      }))
-    }, 1000)
-  }
-
-  async getBlockDetail(hash: string): Promise<BlockDetail | null> {
+  private grpcBlockToDetail(raw: Record<string, unknown>, fallbackHash: string): BlockDetail | null {
     try {
-      const res = await fetch(`${API_BASE}/blocks/${hash}`)
-      if (!res.ok) return null
-      const data = await res.json()
+      const header  = (raw.header  ?? {}) as Record<string, unknown>
+      const verbose = (raw.verboseData ?? {}) as Record<string, unknown>
+      const txs     = Array.isArray(raw.transactions) ? raw.transactions : []
 
       const parents: string[] = []
-      const parentLevels = data.header?.parents || data.parents || []
+      const parentLevels = (header.parents ?? []) as Array<{ parentHashes?: string[] }>
       for (const level of parentLevels) {
-        if (Array.isArray(level.parentHashes)) {
-          parents.push(...level.parentHashes)
-        }
+        if (Array.isArray(level.parentHashes)) parents.push(...level.parentHashes)
       }
 
       return {
-        hash: data.verboseData?.hash || hash,
+        hash:         String(verbose.hash ?? fallbackHash),
         parentHashes: parents,
-        blueScore: Number(data.verboseData?.blueScore || 0),
-        daaScore: Number(data.header?.daaScore || 0),
-        timestamp: Number(data.header?.timestamp || 0),
-        isBlue: true,
-        nonce: String(data.header?.nonce || '0'),
-        bits: Number(data.header?.bits || 0),
-        version: Number(data.header?.version || 0),
-        transactions: (data.transactions || []).map((tx: any) => ({
-          id: tx.verboseData?.transactionId || 'unknown',
-          inputs: tx.inputs?.length || 0,
-          outputs: tx.outputs?.length || 0,
-          amount: 0,
-        }))
+        blueScore:    Number(verbose.blueScore ?? header.blueScore ?? 0),
+        daaScore:     Number(header.daaScore ?? 0),
+        timestamp:    Number(header.timestamp ?? 0),
+        isBlue:       true,
+        nonce:        String(header.nonce ?? '0'),
+        bits:         Number(header.bits ?? 0),
+        version:      Number(header.version ?? 0),
+        transactions: txs.map((tx: any) => ({
+          id:      String(tx?.verboseData?.transactionId ?? 'unknown'),
+          inputs:  Array.isArray(tx?.inputs)  ? tx.inputs.length  : 0,
+          outputs: Array.isArray(tx?.outputs) ? tx.outputs.length : 0,
+          amount:  0,
+        })),
       }
-    } catch (e) {
-      console.warn('[KaspaClient] getBlockDetail failed:', e)
+    } catch {
       return null
     }
   }
 
-  disconnect() {
-    if (this.mockStream) {
-      this.mockStream.stop()
-      this.mockStream = null
+  /**
+   * Second pass: mark blocks as red if they appear in any other block's
+   * mergeSetReds.  All other blocks remain blue.
+   */
+  private classifyBlueRed(blocks: DagBlock[]) {
+    const redSet = new Set<string>()
+    for (const block of blocks) {
+      for (const h of block.mergeSetReds) redSet.add(h)
     }
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval)
-      this.pollInterval = null
+    for (const block of blocks) {
+      if (redSet.has(block.hash)) block.isBlue = false
     }
-    if (this.statsInterval) {
-      clearInterval(this.statsInterval)
-      this.statsInterval = null
-    }
-    this.setState('disconnected')
   }
 }
 
