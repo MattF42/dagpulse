@@ -1,6 +1,7 @@
 import type { DagBlock, NetworkStats, ConnectionState, BlockDetail } from './types'
 import { MockBlockStream } from './mock'
 import { WSTransport } from './ws-transport'
+import { formatHashrate } from '../stats/engine'
 
 /** Target BPS that HTND is configured to run at; used only by the mock fallback. */
 const HTND_TARGET_BPS = 5
@@ -84,6 +85,10 @@ export class KaspaClient {
         this.statsCallbacks.forEach(cb => cb({ daaScore: dagInfo.virtualDaaScore as number }))
       }
 
+      if (dagInfo.virtualBlueScore) {
+        this.statsCallbacks.forEach(cb => cb({ blueScore: dagInfo.virtualBlueScore as number }))
+      }
+
       const parsed: DagBlock[] = []
       for (const raw of blocks) {
         const block = this.parseWsBlock(raw)
@@ -120,6 +125,14 @@ export class KaspaClient {
       this.blockCallbacks.forEach(cb => cb(block))
       this.batchCallbacks.forEach(cb => cb([block]))
       this.statsCallbacks.forEach(cb => cb({ blocksSeen: this.seenHashes.size }))
+    })
+
+    transport.onStats((msg) => {
+      const partial: Partial<NetworkStats> = {}
+      if (msg.blueScore != null)  partial.blueScore = Number(msg.blueScore)
+      if (msg.daaScore  != null)  partial.daaScore  = Number(msg.daaScore)
+      if (msg.hashrate  != null)  partial.hashrate  = formatHashrate(Number(msg.hashrate))
+      this.statsCallbacks.forEach(cb => cb(partial))
     })
 
     transport.connect()

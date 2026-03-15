@@ -41,15 +41,23 @@ export type ErrorMessage = {
   message: string
 }
 
+export type StatsMessage = {
+  type: 'stats'
+  blueScore?: number | null
+  daaScore?: number | null
+  hashrate?: number | null
+}
+
 export type PingMessage = { type: 'ping' }
 export type PongMessage = { type: 'pong' }
 
-export type BridgeMessage = SnapshotMessage | BlockMessage | StatusMessage | ErrorMessage | PingMessage | PongMessage
+export type BridgeMessage = SnapshotMessage | BlockMessage | StatusMessage | ErrorMessage | StatsMessage | PingMessage | PongMessage
 
 type SnapshotCallback = (msg: SnapshotMessage) => void
 type BlockCallback = (msg: BlockMessage) => void
 type StatusCallback = (msg: StatusMessage) => void
 type ErrorCallback = (msg: ErrorMessage) => void
+type StatsCallback = (msg: StatsMessage) => void
 type ConnectFailCallback = () => void
 
 export class WSTransport {
@@ -61,12 +69,14 @@ export class WSTransport {
   private blockCallbacks: BlockCallback[] = []
   private statusCallbacks: StatusCallback[] = []
   private errorCallbacks: ErrorCallback[] = []
+  private statsCallbacks: StatsCallback[] = []
   private connectFailCallbacks: ConnectFailCallback[] = []
 
   onSnapshot(cb: SnapshotCallback) { this.snapshotCallbacks.push(cb) }
   onBlock(cb: BlockCallback)       { this.blockCallbacks.push(cb) }
   onStatus(cb: StatusCallback)     { this.statusCallbacks.push(cb) }
   onError(cb: ErrorCallback)       { this.errorCallbacks.push(cb) }
+  onStats(cb: StatsCallback)       { this.statsCallbacks.push(cb) }
   /** Called once if the WebSocket never connects within CONNECT_TIMEOUT_MS. */
   onConnectFail(cb: ConnectFailCallback) { this.connectFailCallbacks.push(cb) }
 
@@ -113,6 +123,9 @@ export class WSTransport {
           break
         case 'status':
           this.statusCallbacks.forEach(cb => cb(msg as StatusMessage))
+          break
+        case 'stats':
+          this.statsCallbacks.forEach(cb => cb(msg as StatsMessage))
           break
         case 'error':
           console.warn(PREFIX, 'Bridge error:', (msg as ErrorMessage).message)
