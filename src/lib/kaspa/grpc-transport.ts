@@ -91,7 +91,11 @@ export async function grpcWebStream(
 
   let response: Response
   try {
-    // Convert Uint8Array to ArrayBuffer for TypeScript 5.9+ BodyInit compatibility
+    // ArrayBuffer.slice() creates a copy.  For our gRPC-web frames this is
+    // negligible (< a few hundred bytes per call), and the copy is required
+    // because TypeScript 5.9+ tightened BodyInit to require ArrayBuffer (not
+    // ArrayBufferLike), and the Uint8Array returned by encodeFrame() carries
+    // the wider ArrayBufferLike constraint due to its Uint8Array parameter type.
     const frameBytes = encodeFrame(msgBytes)
     const body = frameBytes.buffer.slice(
       frameBytes.byteOffset,

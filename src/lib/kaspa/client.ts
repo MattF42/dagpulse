@@ -18,6 +18,9 @@ import { grpcWebUnary, grpcWebStream } from './grpc-transport'
  */
 const RPC_HOST: string = import.meta.env.VITE_RPC_HOST ?? ''
 
+/** Target BPS that HTND is configured to run at; used only by the mock fallback. */
+const HTND_TARGET_BPS = 5
+
 type BlockCallback = (block: DagBlock) => void
 type StatsCallback = (stats: Partial<NetworkStats>) => void
 type StateCallback = (state: ConnectionState) => void
@@ -329,7 +332,7 @@ export class KaspaClient {
     this.setState('connected')
 
     this.statsInterval = setInterval(() => {
-      const bps = 4.5 + Math.random() * 1.5 // ~5 BPS like a local HTND node
+      const bps = HTND_TARGET_BPS * (0.9 + Math.random() * 0.2) // ±10% jitter around target
       this.statsCallbacks.forEach(cb => cb({
         blocksPerSecond: bps,
         txPerSecond: bps * 0.4,
