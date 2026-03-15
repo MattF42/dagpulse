@@ -3,14 +3,14 @@
 #
 # Services
 # ────────
-#   dagpulse    – nginx: serves the built SPA + proxies gRPC-web
-#   grpcwebproxy – translates browser gRPC-web (HTTP/1.1) to HTND gRPC (HTTP/2)
+#   bridge      – Python FastAPI WebSocket bridge: browser WS ↔ HTND gRPC
+#   dagpulse    – nginx: serves the built SPA + proxies /dagpulse/ws → bridge
 #
 # Prerequisites
 # ─────────────
 #   1. Build the SPA:  npm run build
-#   2. The HTND node must be running on the HOST at port 16110
-#      (the grpcwebproxy connects to host.docker.internal:16110).
+#   2. The HTND node must be running on the HOST at port 42420
+#      (the bridge connects to host.docker.internal:42420).
 #   3. Put your TLS certificates in ./nginx/certs/ (fullchain.pem, privkey.pem)
 #      or use the provided HTTP-only profile for testing behind a load-balancer.
 #
@@ -26,29 +26,25 @@
 
 services:
 
-  # ── gRPC-web ↔ gRPC bridge ────────────────────────────────────────────────
-  grpcwebproxy:
-    image: ghcr.io/improbable-eng/grpc-web:latest
-    # Build from source if the image is unavailable:
-    # build:
-    #   context: https://github.com/improbable-eng/grpc-web.git#master:go/grpcwebproxy
+  # ── WebSocket ↔ gRPC bridge ───────────────────────────────────────────────
+  bridge:
+    build: ./bridge
+    environment:
+      - HTND_HOST=host.docker.internal
+      - HTND_PORT=42420
+      - BRIDGE_PORT=8765
+    ports:
+      - "8765:8765"
     restart: unless-stopped
-    command:
-      - "--backend_addr=host.docker.internal:16110"
-      - "--allow_all_origins"
-      - "--run_tls_server=false"
-      - "--server_http_debug_port=8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"  # lets container reach the host HTND node
-    expose:
-      - "8080"
 
-  # ── nginx: static SPA + gRPC-web proxy ───────────────────────────────────
+  # ── nginx: static SPA + WebSocket proxy ──────────────────────────────────
   dagpulse:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - grpcwebproxy
+      - bridge
     ports:
       - "80:80"
       - "443:443"
@@ -66,7 +62,7 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - grpcwebproxy
+      - bridge
     ports:
       - "8090:80"
     volumes:
