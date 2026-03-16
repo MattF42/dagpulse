@@ -38,7 +38,7 @@
   })
 </script>
 
-<div class="px-4 py-2 bg-surface/40 border-t border-border text-xs text-text-dim">
+<div class="px-4 py-2 bg-surface/40 border-t border-border text-xs text-text-dim overflow-hidden">
   <span class="text-accent font-semibold mr-1">GHOSTDAG:</span>
-  {message}
+  <span class="line-clamp-2">{message}</span>
 </div>
