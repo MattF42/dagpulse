@@ -14,9 +14,18 @@
 
   let showStats = $state(true)
   let isMobile = $state(false)
+  let isPortrait = $state(false)
+  let dismissedPortraitOverlay = $state(false)
 
   function checkMobile() {
     isMobile = window.innerWidth < 768
+    isPortrait = window.innerHeight > window.innerWidth
+
+    // Reset dismissal when user rotates back to landscape
+    if (!isPortrait) {
+      dismissedPortraitOverlay = false
+    }
+
     if (isMobile) showStats = false
   }
 
@@ -77,6 +86,29 @@
           <div class="text-text text-lg font-semibold">Connecting to Hoosat Network</div>
           <div class="text-text-dim text-sm mt-1">Fetching live BlockDAG data...</div>
         </div>
+      </div>
+    {/if}
+
+    <!-- Portrait orientation overlay -->
+    {#if isMobile && isPortrait && !dismissedPortraitOverlay}
+      <div class="absolute inset-0 z-50 flex flex-col items-center justify-center bg-bg/95 backdrop-blur-sm px-8 text-center">
+        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" class="text-accent" aria-hidden="true">
+          <!-- Phone outline (portrait) -->
+          <rect x="20" y="8" width="24" height="40" rx="3" stroke="currentColor" stroke-width="2.5" fill="none"/>
+          <!-- Phone screen -->
+          <rect x="23" y="13" width="18" height="28" rx="1" stroke="currentColor" stroke-width="1.5" fill="none" opacity="0.5"/>
+          <!-- Rotation arrow -->
+          <path d="M48 18 C54 18 58 24 58 32 C58 40 54 46 48 46" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+          <polyline points="44,14 48,18 44,22" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <h2 class="text-text text-xl font-bold mt-6 mb-2">Rotate for best experience</h2>
+        <p class="text-text-dim text-sm mb-8">DAGPulse is a live blockchain visualiser designed for landscape viewing. Rotate your device for the full experience.</p>
+        <button
+          onclick={() => dismissedPortraitOverlay = true}
+          class="px-4 py-2 rounded border border-border text-text-dim text-sm hover:text-text hover:border-accent transition-colors cursor-pointer bg-transparent"
+        >
+          Continue in portrait anyway
+        </button>
       </div>
     {/if}
   </div>
