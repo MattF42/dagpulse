@@ -215,7 +215,13 @@ export class KaspaClient {
       const blueScore = Number(verbose.blueScore ?? header.blueScore ?? 0)
       const daaScore  = Number(header.daaScore ?? 0)
       const timestamp = Number(header.timestamp ?? Date.now())
-      const txCount   = Array.isArray(raw.transactions) ? raw.transactions.length : 0
+      // const txCount   = Array.isArray(raw.transactions) ? raw.transactions.length : 0
+      const txCount = Number(
+         raw._txCount ??
+         verbose.transactionCount ??
+         (Array.isArray(verbose.transactionIds) ? verbose.transactionIds.length : 0) ??
+         (Array.isArray(raw.transactions) ? raw.transactions.length : 0)
+       ) 
 
       const mergeSetBlues: string[] = (verbose.mergeSetBluesHashes as string[] | undefined) ?? []
       const mergeSetReds:  string[] = (verbose.mergeSetRedsHashes  as string[] | undefined) ?? []

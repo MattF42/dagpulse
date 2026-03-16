@@ -223,6 +223,10 @@ async def _run_subscription():
             async def _on_block(msg: dict):
                 notif = msg.get("blockAddedNotification")
                 if notif:
+                    block = notif.get("block", {})
+                    verbose = block.get("verboseData", {})
+                    tx_ids = verbose.get("transactionIds", [])
+                    block["_txCount"] = len(tx_ids) if isinstance(tx_ids, list) else 0
                     await _broadcast({"type": "block", "block": notif.get("block", {})})
                 confirm = msg.get("notifyBlockAddedResponse")
                 if confirm is not None:
