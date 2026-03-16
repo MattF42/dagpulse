@@ -262,7 +262,7 @@
   }
 </script>
 
-<div class="relative flex-1 overflow-hidden" bind:this={containerEl}>
+<div class="relative flex-1 min-h-0 overflow-hidden" bind:this={containerEl}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <canvas
     bind:this={canvasEl}

@@ -57,15 +57,15 @@
   let hasBlocks = $derived($blocks.length > 0)
 </script>
 
-<div class="w-full h-full flex flex-col bg-bg">
+<div class="w-full h-full flex flex-col bg-bg overflow-hidden">
   <Header {isMobile} {toggleStats} {showStats} />
-  <div class="flex-1 flex min-h-0 relative">
+  <div class="flex-1 flex min-h-0 overflow-hidden relative">
     {#if showStats}
       <aside aria-label="Network statistics">
         <StatsPanel />
       </aside>
     {/if}
-    <main class="flex-1 min-w-0">
+    <main class="flex-1 min-h-0 min-w-0 overflow-hidden">
       <DagCanvas />
     </main>
 
