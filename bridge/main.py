@@ -31,6 +31,10 @@ HTND_HOST = os.environ.get("HTND_HOST", "localhost")
 HTND_PORT = int(os.environ.get("HTND_PORT", "42420"))
 BRIDGE_PORT = int(os.environ.get("BRIDGE_PORT", "8765"))
 STATS_INTERVAL = float(os.environ.get("STATS_INTERVAL", "10"))
+_HTN_BPS = 5
+
+_HTN_BPS = 5
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -139,13 +143,17 @@ async def _run_stats_loop():
                 except Exception as exc:
                     logger.debug("Could not fetch tip block for blueScore: %s", exc)
 
-            hash_resp = await _htnd.request(
-                "estimateNetworkHashesPerSecondRequest",
-                {"windowSize": 1000, "startHash": None},
-            )
-            nhps = hash_resp.get("estimateNetworkHashesPerSecondResponse", {}).get(
-                "networkHashesPerSecond", 0
-            )
+            difficulty = dag_info.get("difficulty")
+            if difficulty is not None:
+                nhps = int(float(difficulty) * 2 * _HTN_BPS)
+            else:
+                hash_resp = await _htnd.request(
+                    "estimateNetworkHashesPerSecondRequest",
+                    {"windowSize": 1000, "startHash": nhps_hash},
+                )
+                nhps = hash_resp.get("estimateNetworkHashesPerSecondResponse", {}).get(
+                    "networkHashesPerSecond", 0
+                )
 
             await _broadcast(
                 {
